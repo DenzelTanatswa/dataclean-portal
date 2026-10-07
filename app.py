@@ -750,3 +750,139 @@ elif page == "Export":
         st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
         st.markdown('<div class="dc-section-title">Preview</div>', unsafe_allow_html=True)
         st.dataframe(cleaned_df.head(10), use_container_width=True)
+
+
+# ==========================================
+# PAGE: DATASETS
+# ==========================================
+
+elif page == "Datasets":
+
+    st.markdown('<div class="dc-page-title">📁 Datasets</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dc-page-subtitle">All datasets processed through DataClean Portal.</div>', unsafe_allow_html=True)
+
+    if not st.session_state.db_ok:
+        st.warning("⚠️ PostgreSQL is not connected. Dataset history is unavailable.")
+    else:
+        try:
+            datasets = get_all_datasets()
+            if not datasets:
+                st.info("No datasets have been uploaded yet. Upload a file to get started.")
+            else:
+                ds_df = pd.DataFrame(datasets)
+                st.dataframe(ds_df, use_container_width=True, hide_index=True)
+                st.markdown(f"**{len(datasets)} dataset(s) on record.**")
+        except Exception as e:
+            st.error(f"Could not load datasets: {e}")
+
+
+# ==========================================
+# PAGE: HISTORY
+# ==========================================
+
+elif page == "History":
+
+    st.markdown('<div class="dc-page-title">🕒 Cleaning History</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dc-page-subtitle">All cleaning runs and quality score progression.</div>', unsafe_allow_html=True)
+
+    if not st.session_state.db_ok:
+        st.warning("⚠️ PostgreSQL is not connected. Cleaning history is unavailable.")
+    else:
+        try:
+            history = get_cleaning_history()
+            if not history:
+                st.info("No cleaning runs recorded yet. Clean a dataset to get started.")
+            else:
+                hist_df = pd.DataFrame(history)
+                st.dataframe(hist_df, use_container_width=True, hide_index=True)
+
+                st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+
+                # Quality score chart
+                st.markdown('<div class="dc-section-title">📈 Quality Score Over Time</div>', unsafe_allow_html=True)
+                quality_hist = get_quality_history()
+                if quality_hist:
+                    chart_df = pd.DataFrame(quality_hist)
+                    chart_df = chart_df.rename(columns={"run_code": "Run", "score": "Quality Score"})
+                    chart_df = chart_df.set_index("Run")[["Quality Score"]]
+                    st.line_chart(chart_df, use_container_width=True)
+
+                # Drill into a specific run
+                st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+                st.markdown('<div class="dc-section-title">🔎 Inspect Run Audit Log</div>', unsafe_allow_html=True)
+                run_codes = [r["Run ID"] for r in history]
+                selected_run = st.selectbox("Select a Run ID", run_codes)
+                if selected_run:
+                    audit_entries = get_audit_for_run(selected_run)
+                    if audit_entries:
+                        st.dataframe(pd.DataFrame(audit_entries), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No audit entries found for this run.")
+        except Exception as e:
+            st.error(f"Could not load history: {e}")
+
+
+# ==========================================
+# PAGE: DATABASE
+# ==========================================
+
+elif page == "Database":
+
+    st.markdown('<div class="dc-page-title">🗄️ Database</div>', unsafe_allow_html=True)
+    st.markdown('<div class="dc-page-subtitle">PostgreSQL connection status and stored record counts.</div>', unsafe_allow_html=True)
+
+    # Connection status card
+    if st.session_state.db_ok:
+        st.success("✅ PostgreSQL is connected and tables are initialised.")
+    else:
+        st.error("❌ PostgreSQL is not connected. Check your .env credentials and ensure PostgreSQL is running.")
+        st.markdown("""
+        **Troubleshooting checklist:**
+        - Is PostgreSQL running locally?
+        - Is the database `dataclean` created?
+        - Are the credentials in `.env` correct?
+        - Is port 5432 open?
+        """)
+
+    if st.button("🔄 Retry Connection"):
+        ok, err = test_connection()
+        st.session_state.db_ok = ok
+        if ok:
+            try:
+                engine = get_engine()
+                Base.metadata.create_all(engine)
+            except Exception:
+                pass
+            st.success("✅ Connected successfully.")
+        else:
+            st.error(f"❌ Connection failed: {err}")
+        st.rerun()
+
+    if st.session_state.db_ok:
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="dc-section-title">Record Counts</div>', unsafe_allow_html=True)
+        try:
+            summary = get_db_summary()
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("Datasets", summary["datasets"])
+            with m2:
+                st.metric("Cleaning Runs", summary["cleaning_runs"])
+            with m3:
+                st.metric("Quality Checks", summary["quality_checks"])
+            with m4:
+                st.metric("Audit Entries", summary["audit_entries"])
+        except Exception as e:
+            st.error(f"Could not load summary: {e}")
+
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="dc-section-title">Table Reference</div>', unsafe_allow_html=True)
+        st.markdown("""
+        | Table | Purpose |
+        |---|---|
+        | `datasets` | One row per uploaded file — stores filename, shape, quality score, status |
+        | `cleaning_runs` | One row per cleaning execution — links to dataset, stores before/after metrics |
+        | `cleaning_audit` | One row per operation within a run — e.g. "Spaces removed: 4" |
+        | `quality_checks` | One row per validation rule per run — stores pass/warn/fail status |
+        | `dataset_versions` | Tracks each version of a dataset as cleaning progresses |
+        """)
